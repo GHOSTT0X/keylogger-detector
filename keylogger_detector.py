@@ -556,10 +556,36 @@ SIGN_IN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SIGN_IN_VALUE = "KeyloggerDetector"
 
 
+MAX_RUN_COMMAND = 260  # Windows ignores Run/RunOnce command lines longer than this
+
+
+def _short_path(path: Path) -> str:
+    """8.3 short form of an existing path (Windows), or the path unchanged if unavailable."""
+    if not IS_WINDOWS:
+        return str(path)
+    try:
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        size = get_short(str(path), None, 0)
+        if size:
+            buf = ctypes.create_unicode_buffer(size)
+            if get_short(str(path), buf, size):
+                return buf.value
+    except (AttributeError, OSError):
+        pass
+    return str(path)
+
+
 def sign_in_command() -> str:
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     log = default_data_dir() / "keylogger_alerts.jsonl"
-    return subprocess.list2cmdline([str(pythonw), str(SCRIPT_PATH), "--monitor", "--log", str(log)])
+    command = subprocess.list2cmdline([str(pythonw), str(SCRIPT_PATH), "--monitor", "--log", str(log)])
+    if len(command) <= MAX_RUN_COMMAND:
+        return command
+    # Long install paths (spaces, deep folders): fall back to 8.3 short names. The log file may not
+    # exist yet, so shorten its directory and keep the file name.
+    log_dir = log.parent
+    short_log = (_short_path(log_dir) + "\\" + log.name) if log_dir.is_dir() else str(log)
+    return subprocess.list2cmdline([_short_path(pythonw), _short_path(SCRIPT_PATH), "--monitor", "--log", short_log])
 
 
 def configure_sign_in(enable: bool) -> None:
@@ -570,10 +596,10 @@ def configure_sign_in(enable: bool) -> None:
     if enable:
         if not Path(sys.executable).with_name("pythonw.exe").is_file():
             raise OSError("pythonw.exe is required for background monitoring at sign-in.")
+        default_data_dir().mkdir(parents=True, exist_ok=True)  # before building: its short name needs it to exist
         command = sign_in_command()
-        if len(command) > 260:
+        if len(command) > MAX_RUN_COMMAND:
             raise OSError("The startup command is too long. Move the detector to a shorter path.")
-        default_data_dir().mkdir(parents=True, exist_ok=True)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, SIGN_IN_KEY) as key:
             winreg.SetValueEx(key, SIGN_IN_VALUE, 0, winreg.REG_SZ, command)
     else:

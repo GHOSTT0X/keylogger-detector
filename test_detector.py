@@ -1,4 +1,5 @@
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -186,11 +187,14 @@ class ScriptDetectionTests(unittest.TestCase):
         with (patch.dict(sys.modules, {"winreg": registry}), patch.object(detector, "IS_WINDOWS", True),
               patch.object(sys, "executable", exe)):
             with patch.object(detector, "default_data_dir", return_value=self.root / "App Data"):
-                command = detector.sign_in_command()
                 detector.configure_sign_in(True)
-                self.assertIn(' --monitor --log "', command)
-                self.assertIn("pythonw.exe", command)
-                self.assertIn(str(detector.SCRIPT_PATH), command)
+                command = detector.sign_in_command()
+                self.assertLessEqual(len(command), detector.MAX_RUN_COMMAND)
+                self.assertIn(" --monitor --log ", command)
+                args = shlex.split(command, posix=False)
+                # Long paths may be shortened to 8.3 names; both must point at the same files.
+                self.assertEqual(Path(args[0].strip('"')).resolve(), (self.root / "pythonw.exe").resolve())
+                self.assertEqual(Path(args[1].strip('"')).resolve(), detector.SCRIPT_PATH)
                 registry.SetValueEx.assert_called_once_with(
                     key, detector.SIGN_IN_VALUE, 0, registry.REG_SZ, command
                 )
