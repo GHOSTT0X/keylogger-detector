@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import ctypes
 import datetime
 import hashlib
 import json
